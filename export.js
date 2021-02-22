@@ -4,15 +4,20 @@ const fs = require('fs');
 const os = require('os');
 const homedir = os.homedir();
 const platform = os.platform();
-const { copyToPath, playbackFile } = require('./env');
+const { copyToPath, playbackFile, resolutionX, resolutionY, displayChat, bitrate } = require('./env');
 const spawn = require('child_process').spawn;
+const path_linux_chromium = '/usr/bin/chromium-browser';
+const path_linux_chrome = '/usr/bin/google-chrome';
+const path_darwin_chrome = '/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome';
+
+var width       = Number(resolutionX);
+var height      = Number(resolutionY);
+//console.log('width: ' + width + ' height: ' + height);
 
 var xvfb        = new Xvfb({
     silent: true,
-    xvfb_args: ["-screen", "0", "1280x800x24", "-ac", "-nolisten", "tcp", "-dpi", "96", "+extension", "RANDR"]
+    xvfb_args: ["-screen", "0", `${width}x${height}x24`, "-ac", "-nolisten", "tcp", "-dpi", "96", "+extension", "RANDR"]
 });
-var width       = 1280;
-var height      = 720;
 var options     = {
   headless: false,
   args: [
@@ -26,15 +31,34 @@ var options     = {
     '--shm-size=1gb',
     '--disable-dev-shm-usage',
     '--start-fullscreen',
-    '--app=https://www.google.com/',
-    `--window-size=${width},${height}`,
+    '-homepage about:blank',
+    '--app',
   ],
 }
 
 if(platform == "linux"){
-    options.executablePath = "/usr/bin/google-chrome"
+//    fs.access(path_linux_chrome, fs.F_OK, (err) => {
+//        if (err) {
+//            console.error("Chrome not found - trying Chromium");
+//            fs.access(path_linux_chromium, fs.F_OK, (err2) => {
+//                if (err2) {
+//                    console.error("Chromium not found - no supported browser found, exiting");
+//                    return
+//                }
+                options.executablePath = path_linux_chrome;
+//            })
+//            return
+//        }
+//    options.executablePath = path_linux_chrome;
+//    })
 }else if(platform == "darwin"){
-    options.executablePath = "/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome"
+    fs.access(path_linux_chrome, fs.F_OK, (err) => {
+        if (err) {
+            console.error("Chrome not found - no supported browser found, exiting");
+            return
+        }
+    options.executablePath = path_darwin_chrome;
+    })
 }
 
 async function main() {
@@ -51,7 +75,7 @@ async function main() {
             process.exit(1);
         }
         // Verify if recording URL has the correct format
-        var urlRegex = new RegExp('^https?:\\/\\/.*\\/playback\\/presentation\\/2\\.0\\/' + playbackFile + '\\?meetingId=[a-z0-9]{40}-[0-9]{13}');
+        var urlRegex = new RegExp('^https?:\\/\\/.*\\/playback\\/presentation\\/2\\.[03]\\/' + playbackFile + '\\?meetingId=[a-z0-9]{40}-[0-9]{13}');
         if(!urlRegex.test(url)){
             console.warn('Invalid recording URL!');
             process.exit(1);
@@ -73,14 +97,6 @@ async function main() {
             process.exit(1);
         }
 
-        var convert = process.argv[5]
-        if(!convert){
-            convert = false
-        }else if(convert !== "true" && convert !== "false"){
-            console.warn("Invalid convert value!");
-            process.exit(1);
-        }
-
         browser = await puppeteer.launch(options)
         const pages = await browser.pages()
 
@@ -88,7 +104,7 @@ async function main() {
 
         page.on('console', msg => {
             var m = msg.text();
-            //console.log('PAGE LOG:', m) // uncomment if you need
+            console.log('PAGE LOG:', m) // uncomment if you need
         });
 
         await page._client.send('Emulation.clearDeviceMetricsOverride')
@@ -139,11 +155,7 @@ async function main() {
         // Wait for download of webm to complete
         await page.waitForSelector('html.downloadComplete', {timeout: 0})
 
-        if(convert){
-            convertAndCopy(exportname)
-        }else{
-            copyOnly(exportname)
-        }
+        copyOnly(exportname)
 
     }catch(err) {
         console.log(err)
@@ -158,60 +170,6 @@ async function main() {
 }
 
 main()
-
-function convertAndCopy(filename){
-
-    var copyFromPath = homedir + "/Downloads";
-    var onlyfileName = filename.split(".webm")
-    var mp4File = onlyfileName[0] + ".mp4"
-    var copyFrom = copyFromPath + "/" + filename + ""
-    var copyTo = copyToPath + "/" + mp4File;
-
-    if(!fs.existsSync(copyToPath)){
-        fs.mkdirSync(copyToPath);
-    }
-
-    console.log(copyTo);
-    console.log(copyFrom);
-
-    const ls = spawn('ffmpeg',
-        [   '-y',
-            '-i "' + copyFrom + '"',
-            '-c:v libx264',
-            '-preset veryfast',
-            '-movflags faststart',
-            '-profile:v high',
-            '-level 4.2',
-            '-max_muxing_queue_size 9999',
-            '-vf mpdecimate',
-            '-vsync vfr "' + copyTo + '"'
-        ],
-        {
-            shell: true
-        }
-
-    );
-
-    ls.stdout.on('data', (data) => {
-        console.log(`stdout: ${data}`);
-    });
-
-    ls.stderr.on('data', (data) => {
-        console.error(`stderr: ${data}`);
-    });
-
-    ls.on('close', (code) => {
-        console.log(`child process exited with code ${code}`);
-        if(code == 0)
-        {
-            console.log("Convertion done to here: " + copyTo)
-            fs.unlinkSync(copyFrom);
-            console.log('successfully deleted ' + copyFrom);
-        }
-
-    });
-
-}
 
 function copyOnly(filename){
 
